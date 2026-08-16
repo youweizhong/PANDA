@@ -1,0 +1,178 @@
+name: Publish Docs
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build docs site
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: python -m pip install uv
+
+      - name: Install Rust toolchain
+        run: |
+          toolchain="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$toolchain" --profile minimal
+          rustup default "$toolchain"
+
+      - name: Generate Rust API docs
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --no-deps --lib --bins
+
+      - name: Install Python dependencies
+        run: uv sync --locked --group dev
+
+      - name: Generate Python API docs
+        run: uv run --no-sync pdoc evaluation -o site/python
+
+      - name: Assemble Pages site
+        run: |
+          mkdir -p site/rust
+          cp -R target/doc/. site/rust/
+          touch site/.nojekyll
+          cat > site/index.html <<'HTML'
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <title>PANDA Documentation</title>
+              <style>
+                :root {
+                  color-scheme: light dark;
+                  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                  line-height: 1.5;
+                }
+                body {
+                  margin: 0;
+                  min-height: 100vh;
+                  display: grid;
+                  place-items: center;
+                  background: #f8fafc;
+                  color: #111827;
+                }
+                main {
+                  width: min(720px, calc(100% - 48px));
+                  padding: 48px 0;
+                }
+                h1 {
+                  margin: 0 0 12px;
+                  font-size: clamp(2rem, 4vw, 3.5rem);
+                  line-height: 1.05;
+                }
+                p {
+                  margin: 0 0 28px;
+                  max-width: 58ch;
+                  color: #4b5563;
+                }
+                nav {
+                  display: grid;
+                  gap: 12px;
+                }
+                a {
+                  display: block;
+                  padding: 16px 18px;
+                  border: 1px solid #d1d5db;
+                  border-radius: 8px;
+                  color: inherit;
+                  text-decoration: none;
+                  background: #ffffff;
+                }
+                a:hover {
+                  border-color: #6b7280;
+                }
+                strong {
+                  display: block;
+                  margin-bottom: 4px;
+                }
+                span {
+                  color: #6b7280;
+                }
+                @media (prefers-color-scheme: dark) {
+                  body {
+                    background: #111827;
+                    color: #f9fafb;
+                  }
+                  p {
+                    color: #d1d5db;
+                  }
+                  a {
+                    background: #1f2937;
+                    border-color: #374151;
+                  }
+                  a:hover {
+                    border-color: #9ca3af;
+                  }
+                  span {
+                    color: #cbd5e1;
+                  }
+                }
+              </style>
+            </head>
+            <body>
+              <main>
+                <h1>PANDA Documentation</h1>
+                <p>Generated API references for the PANDA Rust crate and Python evaluation package.</p>
+                <nav aria-label="Documentation links">
+                  <a href="rust/panda/index.html">
+                    <strong>Rust API Reference</strong>
+                    <span>rustdoc output for the panda crate.</span>
+                  </a>
+                  <a href="python/index.html">
+                    <strong>Python API Reference</strong>
+                    <span>pdoc output for the evaluation package.</span>
+                  </a>
+                </nav>
+              </main>
+            </body>
+          </html>
+          HTML
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+          include-hidden-files: true
+
+  deploy:
+    name: Deploy docs site
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 10
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

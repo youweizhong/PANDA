@@ -1,0 +1,48 @@
+# Generated fixture trees are local-only; regenerate them with
+# evaluation/benchmarks/generate_all.sh or the evaluation pipeline.
+#
+# NOTE: this directory now holds BOTH the per-suite source packages
+# (fairproof/, lunarlander/, mnist/, safenlp/) and the generated
+# fixture roots. Ignore generated CONTENT, never a whole source package —
+# otherwise a new source file added to a suite package is silently untracked.
+
+# MNIST (CROWN-origin) fixture roots — no source package collides.
+crown_original/
+crown_original_random/
+crown_original_least/
+crown_original_all/
+
+# Certified-radius search inputs (formerly bisection/).
+crown_bin_search/
+crown_bin_search_least/
+crown_bin_search_random/
+
+# Component-timing run fixtures (see evaluation/README.md).
+components_least/
+# Legacy component-timing root from the __p14 tagged-set era — existing
+# checkouts still have it on disk; never track it.
+components_least_p14/
+
+# CIFAR-10 fixture roots from before the suite was dropped — existing
+# checkouts still have them on disk; never track them.
+cifar10/
+cifar10_least/
+cifar10_random/
+
+# FairProof Adult example files, downloaded from the upstream
+# repository (see evaluation/README.md Step 1) — FairProof publishes no
+# license, so they are never committed here.
+fairproof/source/
+
+# LunarLander / SafeNLP / FairProof fixture roots. These differ from their
+# source packages (lunarlander/, safenlp/, fairproof/) only by case, so they
+# are distinct on Linux but NOT on a case-insensitive filesystem.
+LunarLander/
+safeNLP/
+FairProof/
+
+# Legacy output roots from before the bisection -> crown_bin_search rename.
+# Existing checkouts still have these on disk; never track them.
+bisection/
+bisection_least/
+bisection_random/

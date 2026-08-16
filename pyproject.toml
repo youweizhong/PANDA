@@ -1,0 +1,43 @@
+[project]
+name = "panda_eval"
+version = "0.1.0"
+description = "Python evaluation pipeline for PANDA CROWN robustness and fairness benchmarks."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "PANDA contributors" }]
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.4.6",
+    "onnx>=1.15",
+    "onnxruntime>=1.17",
+    "h5py>=3.10",
+    "scipy>=1.17.1",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.1.0",
+    "pdoc>=16.0.0",
+    "pytest>=9.0.3",
+    "ruff>=0.15.13",
+]
+
+[project.scripts]
+panda-eval = "evaluation.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["evaluation"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["evaluation", "tests"]
+exclude = ["^evaluation/third_party/"]
+ignore_missing_imports = true

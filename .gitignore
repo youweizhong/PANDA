@@ -1,0 +1,55 @@
+/target
+/**/target
+**/*.rs.bk
+Cargo.lock.bak
+.DS_Store
+*.un~
+*~
+.vscode/
+.idea/
+.env
+.envrc
+
+# Python tooling for drift checks
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Generated cert artifacts produced by tests are kept under a dedicated
+# folder so they never accidentally bleed into the repo.
+/artifacts/
+
+# Drift-check fixtures are regenerated from Rust on every test run.
+# Static benchmark inputs live under evaluation/benchmarks/.
+/evaluation/benchmarks/drift/*
+!/evaluation/benchmarks/drift/.gitkeep
+
+# Local debug artifacts and large external sources kept out of git.
+/evaluation/artifacts/
+/evaluation/third_party/
+/prompts/
+
+# Generated evaluation outputs. These contain benchmark result data and are
+# intentionally local-only; regenerate them with the evaluation pipeline.
+/evaluation/results/
+/evaluation/reports/
+
+# Paper PDFs / drafts.
+evaluation/parallel_logs/
+
+# Local tooling state directories (not part of the repo).
+/.claude/
+.agents/
+AGENTS.md
+CLAUDE.md
+
+# Runner logs.
+/logs/
+/target_*/
+
+# Cluster orchestration scripts — local only.
+/apptainer/

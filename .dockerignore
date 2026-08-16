@@ -1,0 +1,16 @@
+# Keep the (large, git-ignored) data and build outputs out of the Docker build
+# context — the image bind-mounts fixtures/results at run time instead.
+.git
+.venv
+target
+target_*
+logs
+evaluation/benchmarks
+evaluation/results
+evaluation/third_party
+evaluation/parallel_logs
+apptainer
+**/__pycache__
+.mypy_cache
+.pytest_cache
+.ruff_cache

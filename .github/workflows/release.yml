@@ -1,0 +1,211 @@
+name: Publish container image
+
+# Builds the root Dockerfile for linux/amd64 and linux/arm64 on NATIVE runners
+# (no QEMU), smoke-tests each architecture with a real prove+verify, and only
+# then publishes a multi-arch manifest to GHCR.
+#
+# The published image is the environment artifact readers `docker pull` to
+# reproduce the evaluation without a local Rust toolchain.
+#
+# One-time setup after the first successful run: make the GHCR package public
+# (Packages -> panda -> Package settings -> Change visibility), or every reader
+# hits "denied".
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-image-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/panda
+
+jobs:
+  build:
+    name: Build + smoke (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build once into the local daemon so the smoke test runs against the
+      # exact image that will be published. The publish step below re-runs the
+      # same build against the same cache, so nothing is recompiled.
+      - name: Build image (local)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: ${{ matrix.platform }}
+          load: true
+          tags: panda-eval:ci
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+
+      - name: Fetch the SafeNLP medical benchmark (sparse)
+        run: |
+          git clone --filter=blob:none --sparse \
+            https://github.com/ANTONIONLP/safeNLP.git evaluation/third_party/safeNLP
+          git -C evaluation/third_party/safeNLP sparse-checkout set onnx/medical vnnlib/medical
+
+      # This is the gate: the image must be able to produce a proof and have it
+      # accepted. It exercises exactly the recipe evaluation/README.md documents
+      # (bind-mounted evaluation/ tree, unprivileged user, no network).
+      - name: Smoke test — generate a fixture, prove it, verify it
+        run: |
+          set -euxo pipefail
+          mkdir -p evaluation/results
+          DOCKER_RUN=(docker run --rm --network none
+            --user "$(id -u):$(id -g)" -e HOME=/tmp
+            -v "$PWD/evaluation":/opt/panda/evaluation)
+
+          "${DOCKER_RUN[@]}" --entrypoint /opt/panda/.venv/bin/python panda-eval:ci \
+            -m evaluation.benchmarks.safenlp.sample \
+              --tasks medical --seed 0 --count-per-task 2 --precision-bits 14
+
+          FIXTURE="$(ls evaluation/benchmarks/safeNLP/safenlp_medical_*.json | head -1)"
+          echo "fixture: $FIXTURE"
+
+          "${DOCKER_RUN[@]}" --entrypoint /opt/panda/target/release/panda_prove panda-eval:ci \
+            "$FIXTURE" evaluation/results/smoke_proof.bin \
+            evaluation/quant_params/safenlp_medical.json
+
+          "${DOCKER_RUN[@]}" --entrypoint /opt/panda/target/release/panda_verify panda-eval:ci \
+            "$FIXTURE" evaluation/results/smoke_proof.bin \
+            evaluation/quant_params/safenlp_medical.json | tee verify.txt
+
+          grep -q "property HOLDS" verify.txt
+
+      # Non-gating: tells us whether evaluate.sh (which drives everything
+      # through `uv run`) works unprivileged inside the container, i.e. whether
+      # the docs may present it as a container-supported entry point.
+      - name: Smoke test — evaluate.sh inside the container (informational)
+        continue-on-error: true
+        run: |
+          set -euxo pipefail
+          docker run --rm --network none \
+            --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -v "$PWD/evaluation":/opt/panda/evaluation \
+            --entrypoint bash panda-eval:ci \
+            evaluate.sh --model safenlp_medical --skip-generate --extra "--limit 1"
+
+      - name: Push by digest
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: ${{ matrix.platform }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+
+      # The manifest step below rebuilds the refs as <image>@sha256:<name>, so
+      # the file name must be the bare hex digest.
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest='${{ steps.push.outputs.digest }}'
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Publish multi-arch manifest
+    runs-on: ubuntu-24.04
+    needs: build
+    timeout-minutes: 15
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=edge,enable=${{ github.event_name == 'workflow_dispatch' }}
+          labels: |
+            org.opencontainers.image.title=PANDA
+            org.opencontainers.image.description=Zero-knowledge proofs of local robustness for neural networks (PANDA)
+            org.opencontainers.image.licenses=MIT
+
+      - name: Create manifest list
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
+
+      # The digest printed here is what the paper should cite: it pins the
+      # exact environment the evaluation ran in and can never move.
+      - name: Inspect published image
+        run: |
+          {
+            echo '## Published image'
+            echo
+            echo '```'
+            docker buildx imagetools inspect \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"

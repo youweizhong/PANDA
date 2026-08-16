@@ -1,0 +1,36 @@
+[package]
+name = "panda"
+version = "0.1.0"
+description = "Scalable zero-knowledge proofs of robustness and fairness for neural networks, without revealing private model parameters."
+edition = "2021"
+license = "MIT"
+authors = ["PANDA contributors"]
+rust-version = "1.93"
+
+# drift_probe is a hand-driven CLI probe, not a #[test] suite: it lives under
+# tests/ but supplies its own `fn main`, so it needs the harness disabled.
+#   cargo test --release --test drift_probe -- <group.json> <eps> [n_items]
+[[test]]
+name = "drift_probe"
+harness = false
+
+[dependencies]
+# Numeric helpers used across the plaintext/quantized CROWN modules.
+ndarray = { version = "0.17", features = ["serde"] }
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+ark-ff = "0.6"
+ark-ec = "0.6"
+ark-bn254 = "0.6"
+ark-serialize = "0.6"
+ark-poly = "0.6"
+ark-std = "0.6"
+ark-crypto-primitives = { version = "0.6", features = ["sponge"] }
+ark-poly-commit = "0.6"
+
+# ark-linear-sumcheck is pinned to arkworks 0.4 and would force a
+# duplicate-arkworks-stack situation; we ship a small inner-product
+# sumcheck of our own atop the 0.6 stack. Revisit if the upstream
+# library moves to 0.6.

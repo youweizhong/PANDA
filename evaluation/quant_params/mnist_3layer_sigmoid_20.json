@@ -1,0 +1,8 @@
+{
+  "precision_bits": 14,
+  "target_preact": 0,
+  "table_bits": 19,
+  "out_bound_range_bits": 21,
+  "gadget_range_bits": 19,
+  "sigma_x_scale_log2": 13
+}
