@@ -105,9 +105,8 @@ docker pull ghcr.io/youweizhong/panda:latest
 docker run --rm ghcr.io/youweizhong/panda:latest list
 ```
 
-See [`evaluation/README.md`](evaluation/README.md) for the run recipes (the
-image ships no benchmark data — the datasets below are not redistributable, so
-you download them yourself either way).
+See [`evaluation/README.md`](evaluation/README.md) for the run recipes.
+The image ships no benchmark data.
 
 Test the prover and verifier on a small SafeNLP benchmark. Ensure you have downloaded the datasets and generated fixtures first:
 
