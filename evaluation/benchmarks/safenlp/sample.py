@@ -7,11 +7,18 @@ task from ALL candidates — with NO vanilla-CROWN pre-filter, so properties
 PANDA cannot certify are recorded as honest "unknown" outcomes downstream —
 and writes PANDA-ready fixtures under `evaluation/benchmarks/safeNLP/`. The
 quick closed-form CROWN scan still runs for the diagnostics payload
-(`vanilla_crown_verified` per candidate), but it never affects selection.
+(`vanilla_crown_verified` per candidate), but in the default (paper-panel)
+mode it never affects selection.
 
 Use ``--tasks medical`` / ``--tasks ruarobot`` to (re)generate one task only
 (one task per model); each run deletes
 only its own task's fixtures.
+
+``--require-crown-verifiable`` restricts the draw to boxes the closed-form
+CROWN scan certifies with a comfortable margin. It exists for CI smoke
+tests, which must prove a property that actually holds; never use it for
+the paper panel, since it removes exactly the honest "unknown" rows the
+evaluation depends on.
 """
 
 from __future__ import annotations
@@ -116,7 +123,9 @@ def scan_dataset(task: str):
     return rows
 
 
-def write_fixture(row, output_dir: Path, ordinal: int, precision_bits: int):
+def write_fixture(
+    row, output_dir: Path, ordinal: int, precision_bits: int, crown_filtered: bool = False
+):
     model_path = ROOT / row["model"]
     spec_path = ROOT / row["spec"]
     out_name = f"safenlp_{row['task']}_{row['spec_id']}_{ordinal:03d}.json"
@@ -129,18 +138,41 @@ def write_fixture(row, output_dir: Path, ordinal: int, precision_bits: int):
         precision_bits=precision_bits,
     )
     data = json.loads(out_path.read_text())
-    data["source"] = (
-        f"SafeNLP {row['task']}, unsafe-region semantics; sampled uniformly "
-        "from all candidate hyperrectangles (seed-deterministic, no "
-        "vanilla-CROWN pre-filter)."
-    )
+    if crown_filtered:
+        data["source"] = (
+            f"SafeNLP {row['task']}, unsafe-region semantics; sampled uniformly "
+            "from the vanilla-CROWN-verifiable candidates only "
+            "(seed-deterministic; smoke-test mode, NOT the paper-panel policy)."
+        )
+    else:
+        data["source"] = (
+            f"SafeNLP {row['task']}, unsafe-region semantics; sampled uniformly "
+            "from all candidate hyperrectangles (seed-deterministic, no "
+            "vanilla-CROWN pre-filter)."
+        )
     out_path.write_text(json.dumps(data, indent=2) + "\n")
-    row["output_fixture"] = str(out_path.relative_to(ROOT))
+    # --output-dir may legitimately point outside the repo (CI scratch dirs,
+    # ad-hoc panels). resolve() first so in-repo paths stay repo-relative
+    # regardless of cwd or symlinks, and outside-repo paths are recorded
+    # absolute instead of raising.
+    resolved = out_path.resolve()
+    try:
+        row["output_fixture"] = str(resolved.relative_to(ROOT))
+    except ValueError:
+        row["output_fixture"] = str(resolved)
 
 
 # The two tasks; --tasks selects a subset. Task index keeps the per-task
 # RNG stream stable regardless of which subset a run generates.
 TASKS = ("medical", "ruarobot")
+
+# --require-crown-verifiable additionally demands this much float margin. A
+# sound float bound above zero does not by itself guarantee the quantized
+# prover certifies the box; the recorded 200-fixture panel never certified a
+# float margin below 0.2746 at precision_bits=14 (with zero float/quantized
+# disagreements), so this floor keeps the smoke draw well clear of the
+# unexplored small-margin zone.
+SMOKE_MARGIN = 0.5
 
 
 def main() -> int:
@@ -174,6 +206,14 @@ def main() -> int:
         default=None,
         help="optional path to write scan diagnostics",
     )
+    ap.add_argument(
+        "--require-crown-verifiable",
+        action="store_true",
+        help="restrict the draw to boxes vanilla CROWN certifies with at "
+        f"least {SMOKE_MARGIN} float margin (CI smoke tests only). NEVER "
+        "use this for the paper panel: it removes the honest 'unknown' "
+        "rows the evaluation depends on.",
+    )
     args = ap.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -182,27 +222,50 @@ def main() -> int:
         "source": "SafeNLP",
         "seed": args.seed,
         "requested_count_per_task": args.count_per_task,
-        "selection_policy": "uniform sample from all candidates, no CROWN filter",
+        "selection_policy": (
+            "uniform sample from CROWN-verifiable candidates only (smoke-test mode)"
+            if args.require_crown_verifiable
+            else "uniform sample from all candidates, no CROWN filter"
+        ),
+        "require_crown_verifiable": args.require_crown_verifiable,
         "tasks": {},
     }
     for task_idx, task in enumerate(TASKS):
         if args.tasks != "both" and task != args.tasks:
             continue
-        # Delete only this task's fixtures so concurrent per-task
-        # generation jobs never race on each other's output.
-        for old in args.output_dir.glob(f"safenlp_{task}_*.json"):
-            old.unlink()
         rows = scan_dataset(task)
         verified = [r for r in rows if r["vanilla_crown_verified"]]
         rng = random.Random(args.seed + task_idx)
+        pool = (
+            [r for r in verified if r["float_lower_bound"] >= SMOKE_MARGIN]
+            if args.require_crown_verifiable
+            else rows
+        )
+        if args.require_crown_verifiable and not pool:
+            raise SystemExit(
+                f"{task}: no CROWN-verifiable candidates with margin >= "
+                f"{SMOKE_MARGIN} to sample"
+            )
         selected = (
-            rng.sample(rows, args.count_per_task)
-            if len(rows) > args.count_per_task
-            else list(rows)
+            rng.sample(pool, args.count_per_task)
+            if len(pool) > args.count_per_task
+            else list(pool)
         )
         selected.sort(key=lambda r: int(r["spec_id"].split("_")[-1]))
+        # Delete only this task's fixtures so concurrent per-task generation
+        # jobs never race on each other's output — and only once this run is
+        # certain to write replacements, so a failed run leaves the previous
+        # panel intact.
+        for old in args.output_dir.glob(f"safenlp_{task}_*.json"):
+            old.unlink()
         for j, row in enumerate(selected):
-            write_fixture(row, args.output_dir, j, args.precision_bits)
+            write_fixture(
+                row,
+                args.output_dir,
+                j,
+                args.precision_bits,
+                args.require_crown_verifiable,
+            )
         payload["tasks"][task] = {
             "candidate_count": len(rows),
             "verified_count": len(verified),

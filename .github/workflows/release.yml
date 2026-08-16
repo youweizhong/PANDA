@@ -82,9 +82,16 @@ jobs:
             https://github.com/ANTONIONLP/safeNLP.git evaluation/third_party/safeNLP
           git -C evaluation/third_party/safeNLP sparse-checkout set onnx/medical vnnlib/medical
 
-      # This is the gate: the image must be able to produce a proof and have it
-      # accepted. It exercises exactly the recipe evaluation/README.md documents
-      # (bind-mounted evaluation/ tree, unprivileged user, no network).
+      # This is the gate: the image must be able to produce a proof and have
+      # it accepted, exercising the container recipe evaluation/README.md
+      # documents (bind-mounted evaluation/ tree, unprivileged user, no
+      # network) — but with a CI-only sampling policy:
+      #
+      # --require-crown-verifiable matters. The sampler's default draw
+      # deliberately includes boxes whose property is false (the paper panel's
+      # honest "unknown" rows — ~53% of medical), and proving one of those
+      # correctly ends in a verifier rejection. The gate asserts "property
+      # HOLDS", so it must sample a box that provably holds.
       - name: Smoke test — generate a fixture, prove it, verify it
         run: |
           set -euxo pipefail
@@ -95,7 +102,8 @@ jobs:
 
           "${DOCKER_RUN[@]}" --entrypoint /opt/panda/.venv/bin/python panda-eval:ci \
             -m evaluation.benchmarks.safenlp.sample \
-              --tasks medical --seed 0 --count-per-task 2 --precision-bits 14
+              --tasks medical --seed 0 --count-per-task 1 --precision-bits 14 \
+              --require-crown-verifiable
 
           FIXTURE="$(ls evaluation/benchmarks/safeNLP/safenlp_medical_*.json | head -1)"
           echo "fixture: $FIXTURE"
