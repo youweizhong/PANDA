@@ -41,12 +41,6 @@ venv/
 # Paper PDFs / drafts.
 evaluation/parallel_logs/
 
-# Local tooling state directories (not part of the repo).
-/.claude/
-.agents/
-AGENTS.md
-CLAUDE.md
-
 # Runner logs.
 /logs/
 /target_*/
