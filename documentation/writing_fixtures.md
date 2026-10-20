@@ -5,7 +5,7 @@ PANDA's zero-knowledge proofs require two pieces of configuration: a **fixture**
 The **fixture** (`fixture.json`) is what defines the model and test parameters for PANDA to prove. It contains:
 1. **Neural network**: a list of linear layer weights and activation functions (ReLU, sigmoid, or tanh).
 2. **Input domain**: the allowed perturbation region defined by two vectors, `x_lower` and `x_upper`.
-3. **Property**: the robustness property to test, given by a matrix `C`, a vector `d`, and a `side` (lower or upper) which define `f(x) < Cx+d`.
+3. **Property**: a matrix `C` (`spec_c`) and vector `d` (`spec_d`) define the output expression `C f(x) + d`, where `f(x)` is the network output. The `side` selects whether to certify that this expression is componentwise nonnegative (`lower`), nonpositive (`upper`), or both (`both`), for every input in `[x_lower, x_upper]`.
 4. **Quantization precision**: how many bits of precision the prover should use when converting weights, biases, and bounds to integers.
 
 To generate a PANDA JSON fixture, we have built a few simple paths:
