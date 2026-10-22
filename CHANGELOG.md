@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Added third-party credits and generated Rust and Python dependency-license reports.
 - Added a security policy covering supported versions, private vulnerability reporting, scope, and coordinated disclosure.
 - Added shared repository instructions for coding agents in `AGENTS.md`.
 
