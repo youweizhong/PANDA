@@ -1,0 +1,59 @@
+cff-version: 1.2.0
+message: "If you use PANDA in your research, please cite the paper listed in preferred-citation."
+type: software
+title: "PANDA"
+authors:
+  - family-names: Zhong
+    given-names: Youwei
+  - family-names: Merbaum
+    given-names: Ben
+  - family-names: Antonopoulos
+    given-names: Timos
+  - family-names: Luo
+    given-names: Ning
+  - family-names: Papamanthou
+    given-names: Charalampos
+  - family-names: Sotiraki
+    given-names: Katerina
+  - family-names: Piskac
+    given-names: Ruzica
+repository-code: "https://github.com/youweizhong/PANDA"
+url: "https://github.com/youweizhong/PANDA"
+license: MIT
+abstract: >-
+  PANDA is the official implementation of Certified but Private: Scalable
+  Zero-Knowledge Proofs for Neural Network Guarantees. It uses zero-knowledge
+  proofs to certify neural-network robustness and fairness properties while
+  keeping model parameters private, building on CROWN-style certification.
+keywords:
+  - zero-knowledge proofs
+  - neural network verification
+  - robustness certification
+  - fairness
+  - privacy
+preferred-citation:
+  type: conference-paper
+  title: "Certified but Private: Scalable Zero-Knowledge Proofs for Neural Network Guarantees"
+  authors:
+    - family-names: Zhong
+      given-names: Youwei
+    - family-names: Merbaum
+      given-names: Ben
+    - family-names: Antonopoulos
+      given-names: Timos
+    - family-names: Luo
+      given-names: Ning
+    - family-names: Papamanthou
+      given-names: Charalampos
+    - family-names: Sotiraki
+      given-names: Katerina
+    - family-names: Piskac
+      given-names: Ruzica
+  year: 2026
+  collection-title: "Advances in Neural Information Processing Systems"
+  notes: "Accepted at NeurIPS 2026. The linked version is the arXiv preprint."
+  url: "https://arxiv.org/abs/2608.17070"
+  identifiers:
+    - type: doi
+      value: "10.48550/arXiv.2608.17070"
+      description: "arXiv preprint DOI; not a conference proceedings DOI."
