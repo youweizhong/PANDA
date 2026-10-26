@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Added the NeurIPS 2026 acceptance note and paper link to the README.
 - Added `CITATION.cff` with preferred citation metadata for the PANDA paper accepted at NeurIPS 2026.
 
 - Added third-party credits and generated Rust and Python dependency-license reports.

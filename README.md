@@ -2,6 +2,10 @@
 
 This is the official implementation of the paper "Certified but Private: Scalable Zero-Knowledge Proofs for Neural Network Guarantees" by Youwei Zhong, Ben Merbaum, Timos Antonopoulos, Ning Luo, Charalampos Papamanthou, Katerina Sotiraki, and Ruzica Piskac.
 
+**Accepted at NeurIPS 2026.**
+
+[Paper](https://arxiv.org/abs/2608.17070)
+
 PANDA is a system for proving **local robustness** properties in
 deep neural networks (DNNs) using **zero-knowledge proofs** (ZKPs). 
 Robustness ensures that small perturbations to an input do not induce
