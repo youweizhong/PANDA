@@ -1110,6 +1110,26 @@ fn phase3c_tampered_envelope_table_bottom_num_rejects() {
 }
 
 #[test]
+fn phase3c_tampered_envelope_mult_open_rejects() {
+    // Tamper `r_eval` of the multiplicities open; Hyrax verify returns
+    // false, and the verifier must reject on that result, not drop it.
+    let mut p = prove_small_sigmoid();
+    p.proof.sshape_critical_point_upper_proofs[0]
+        .envelope_mult_open
+        .r_eval += Fr::from(1u64);
+    let err = expect_reject_after_tamper(&p, "phase3c tampered envelope_mult_open.r_eval");
+    assert!(
+        matches!(
+            err,
+            SnarkError::PcsOpenRejected {
+                which: "sshape3c::envelope_mult_open"
+            }
+        ),
+        "expected the envelope_mult_open rejection, got {err:?}"
+    );
+}
+
+#[test]
 fn phase3c_tampered_slack_fd1_high_eval_rejects() {
     // Tamper slack chunk-binding high half; chunk-binding identity
     // `slack_fdN − slack_fdN_high · 2^19 − slack_fdN_low = 0` breaks
