@@ -22,3 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - Corrected the fixture property documentation to describe `C f(x) + d` and the non-strict inequalities selected by `side`.
+
+### Security
+
+- Hyrax openings now bind the claimed evaluation to the commitment. The proof carries the opening randomness `r_eval` of `com_eval`, and the verifier checks `com_eval == value * G0 + r_eval * h` for single and batched openings. Before this, a prover that absorbed a false value into the transcript could pass verification. This changes the proof format (one more field element per opening), so proofs made by earlier versions are not compatible.
