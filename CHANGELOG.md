@@ -21,4 +21,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- Corrected the displayed vulnerability-reporting URL in `SECURITY.md` to point to PANDA.
 - Corrected the fixture property documentation to describe `C f(x) + d` and the non-strict inequalities selected by `side`.

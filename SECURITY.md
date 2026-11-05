@@ -8,7 +8,7 @@ Security fixes land on the latest release on main. Older versions are not suppor
 
 Please report security issues **privately** via GitHub Security Advisories:
 
-[https://github.com/google/capsem/security/advisories/new](https://github.com/youweizhong/PANDA/security/advisories/new)
+[https://github.com/youweizhong/PANDA/security/advisories/new](https://github.com/youweizhong/PANDA/security/advisories/new)
 
 You can expect:
 - An acknowledgement within 7 days.
