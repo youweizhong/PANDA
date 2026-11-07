@@ -3,7 +3,8 @@
 //! Every commitment in PANDA is to the multilinear extension of a
 //! `2^k`-length evaluation table. The default backend is the native
 //! Hyrax re-implementation in [`crate::snark_primitives::hyrax_pcs`],
-//! which is wire-compatible with `ark_poly_commit::hyrax` but exposes
+//! which is wire-compatible with `ark_poly_commit::hyrax` for commitments
+//! (opening proofs also carry `r_eval`) but exposes
 //! per-row Pedersen randomness so the SNARK driver can batch many
 //! single-point opens into one. The trait keeps the driver independent
 //! of the backend so we can swap in Dory or another scheme later.
@@ -178,8 +179,9 @@ impl MlPcs for HyraxBn254 {
         }
         // Absorb the claimed value into the transcript before delegating
         // to the dot-product argument. `hyrax_pcs::open_at` does NOT
-        // absorb internally; mismatched verifier absorption flips the
-        // FS challenge `c` and the round equations diverge.
+        // absorb internally. The absorption keeps the transcripts in
+        // sync; the value itself is bound by the `com_eval` check in
+        // `hyrax_pcs::verify_at`.
         let value = pcs_native_eval(evals, point);
         sponge.absorb(&value);
         let rng = rng.ok_or(HyraxError::MissingRandomness)?;
@@ -197,7 +199,9 @@ impl MlPcs for HyraxBn254 {
         sponge: &mut impl CryptographicSponge,
     ) -> Result<bool, Self::Error> {
         sponge.absorb(&value);
-        Ok(hyrax_pcs::verify_at(vk, commitment, point, proof, sponge)?)
+        Ok(hyrax_pcs::verify_at(
+            vk, commitment, point, value, proof, sponge,
+        )?)
     }
 }
 
@@ -298,6 +302,35 @@ mod tests {
         let verdict =
             HyraxBn254::verify(&vk, &com, &point, bogus, &proof, &mut verifier_sponge).unwrap();
         assert!(!verdict, "verifier accepted lying opening");
+    }
+
+    #[test]
+    fn forged_evaluation_rejected() {
+        // The prover runs the native open with its own false value in the
+        // transcript, so the Fiat-Shamir challenge matches the verifier's.
+        let mut rng = test_rng();
+        let n_vars = 4;
+        let (ck, vk) = HyraxBn254::setup(n_vars, &mut rng).unwrap();
+        let evals = rand_evals(n_vars, &mut rng);
+        let (com, state) = HyraxBn254::commit(&ck, &evals, Some(&mut rng)).unwrap();
+        let point: Vec<Fr> = (0..n_vars).map(|_| Fr::rand(&mut rng)).collect();
+        let forged = mle_evaluate(&evals, &point) + Fr::from(1u64);
+        let mut prover_sponge = fresh_sponge(b"panda-pcs-test");
+        prover_sponge.absorb(&forged);
+        let (_, proof) = hyrax_pcs::open_at(
+            &ck,
+            &evals,
+            &state,
+            &com,
+            &point,
+            &mut prover_sponge,
+            &mut rng,
+        )
+        .unwrap();
+        let mut verifier_sponge = fresh_sponge(b"panda-pcs-test");
+        let verdict =
+            HyraxBn254::verify(&vk, &com, &point, forged, &proof, &mut verifier_sponge).unwrap();
+        assert!(!verdict, "verifier accepted a forged evaluation");
     }
 
     #[test]

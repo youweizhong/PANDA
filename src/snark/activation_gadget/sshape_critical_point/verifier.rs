@@ -328,7 +328,7 @@ pub fn verify_sshape_critical_point(
         });
     }
 
-    hyrax_verify_at(
+    let mult_open_ok = hyrax_verify_at(
         &params.verifier_key,
         &proof.envelope_mult_commit,
         &table_bottom_pt,
@@ -337,6 +337,11 @@ pub fn verify_sshape_critical_point(
         proof.envelope_mult_n_vars,
         sponge,
     )?;
+    if !mult_open_ok {
+        return Err(SnarkError::PcsOpenRejected {
+            which: "sshape3c::envelope_mult_open",
+        });
+    }
 
     // LogUp witness-side single-point bind: open the 7 σ commits at
     // the cell index half of bottom_point and reconstruct W(bp) from

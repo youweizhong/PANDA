@@ -1,9 +1,9 @@
-//! Native Hyrax PCS over BN254 G1. Wire-compatible with
-//! `ark_poly_commit::hyrax`: identical [`HyraxCommitment`] and
-//! [`HyraxProof`] shapes; the Bulletproofs-style dot-product argument
-//! is the same protocol arkworks implements upstream.
+//! Native Hyrax PCS over BN254 G1. The commitment is wire-compatible
+//! with `ark_poly_commit::hyrax` (identical [`HyraxCommitment`] shape)
+//! and the Bulletproofs-style dot-product argument is the same protocol
+//! arkworks implements upstream.
 //!
-//! The only visible difference from upstream is [`CommitState`]: the
+//! One visible difference from upstream is [`CommitState`]: the
 //! per-row Pedersen blinders are `pub`. Arkworks keeps them
 //! `pub(crate)`, which prevents us from forming
 //! `r_batch[j] = Σ_k ρ^k · randomness_k[j]` for a batched commit. Making
@@ -12,6 +12,15 @@
 //! to `K` MLE openings at a shared evaluation point. Soundness reduces
 //! to single-poly Hyrax via Pedersen homomorphism plus a
 //! Schwartz–Zippel argument on the FS-squeezed `ρ`.
+//!
+//! The other is [`Proof`]: it wraps arkworks' [`HyraxProof`] and adds
+//! `r_eval`, the opening randomness of `com_eval`. Upstream's hiding
+//! Hyrax ignores the claimed value in `check`, so `com_eval` alone does
+//! not bind it. With `r_eval` in the proof the verifier checks
+//! `com_eval == value · G0 + r_eval · h`, which binds the claimed value
+//! to the commitment (evaluation binding). PANDA uses the
+//! non-zero-knowledge variant and sends the claimed value in the clear,
+//! so revealing `r_eval` adds no leakage.
 
 use ark_bn254::{Fr, G1Affine};
 use ark_crypto_primitives::sponge::CryptographicSponge;
@@ -19,7 +28,7 @@ use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::{PrimeField, UniformRand};
 use ark_poly::{DenseMultilinearExtension, Polynomial};
 use ark_poly_commit::hyrax::{HyraxCommitment, HyraxProof, HyraxUniversalParams};
-use ark_serialize::CanonicalSerialize;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::RngCore;
 use thiserror::Error;
 
@@ -29,8 +38,15 @@ pub type CommitterKey = HyraxUniversalParams<G1Affine>;
 pub type VerifierKey = HyraxUniversalParams<G1Affine>;
 /// Wire-compatible with arkworks' `HyraxCommitment<G1Affine>`.
 pub type Commitment = HyraxCommitment<G1Affine>;
-/// Wire-compatible with arkworks' `HyraxProof<G1Affine>`.
-pub type Proof = HyraxProof<G1Affine>;
+
+/// Hyrax opening proof: arkworks' dot-product argument plus the opening
+/// randomness `r_eval` of `dot.com_eval`, so the verifier can check
+/// `com_eval == value · G0 + r_eval · h` for the claimed `value`.
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct Proof {
+    pub dot: HyraxProof<G1Affine>,
+    pub r_eval: Fr,
+}
 
 /// Per-commit prover state. `randomness` is the per-row Pedersen blinder
 /// vector of length `dim = 2^(n_vars / 2)`; public so the SNARK driver
@@ -167,7 +183,10 @@ pub fn commit(
 /// `ark_poly_commit::hyrax::open`'s transcript shape:
 /// `absorb(ck, row_coms, point, com_eval, com_d, com_b) → squeeze c`.
 /// Callers must absorb the claimed value into the sponge BEFORE this
-/// call so a lying claim flips `c`.
+/// call. Absorbing alone does not bind the value (a dishonest prover
+/// absorbs the same false value and derives the same `c`); the binding
+/// comes from the `com_eval` check in [`verify_inner`], which is why the
+/// proof carries `r_eval`.
 fn open_inner(
     ck: &CommitterKey,
     evals: &[Fr],
@@ -252,25 +271,33 @@ fn open_inner(
 
     Ok((
         eval,
-        HyraxProof {
-            com_eval,
-            com_d,
-            com_b,
-            z,
-            z_d,
-            z_b,
+        Proof {
+            dot: HyraxProof {
+                com_eval,
+                com_d,
+                com_b,
+                z,
+                z_d,
+                z_b,
+            },
+            r_eval,
         },
     ))
 }
 
-/// Verify a Bulletproofs-style dot-product opening at `point`.
+/// Verify a Bulletproofs-style dot-product opening at `point` for the
+/// claimed `value`. The caller must have absorbed `value` into the
+/// sponge already (see [`open_inner`]).
 fn verify_inner(
     vk: &VerifierKey,
     com: &Commitment,
     point: &[Fr],
+    value: Fr,
     proof: &Proof,
     sponge: &mut impl CryptographicSponge,
 ) -> Result<bool, HyraxError> {
+    let r_eval = proof.r_eval;
+    let proof = &proof.dot;
     let n_vars = point.len();
     if n_vars % 2 == 1 {
         return Err(HyraxError::OddNumVars { got: n_vars });
@@ -307,6 +334,14 @@ fn verify_inner(
     sponge.absorb(&serialize_compressed_vec(&proof.com_d));
     sponge.absorb(&serialize_compressed_vec(&proof.com_b));
     let c = sponge.squeeze_field_elements::<Fr>(1)[0];
+
+    // (0) com_eval opens to the claimed value: com_key[0] · value + h · r_eval.
+    // Checks (1) and (2) show that com_eval commits to the true evaluation
+    // <l^T M, r>; this check ties it to `value`.
+    let expected_com_eval = (com_key[0] * value + vk.h * r_eval).into_affine();
+    if proof.com_eval != expected_com_eval {
+        return Ok(false);
+    }
 
     // (1) pedersen(com_key, z) + h · z_d == com_d + c · (l · row_coms)
     let lhs1 = (pedersen_commit(com_key, &proof.z) + vk.h * proof.z_d).into_affine();
@@ -354,16 +389,18 @@ pub fn open_at(
     open_inner(ck, evals, &state.randomness, com, point, sponge, rng)
 }
 
-/// Verify a single-poly Hyrax opening at `point`. Caller MUST
-/// `sponge.absorb(&claimed_value)` before this call (mirrors [`open_at`]).
+/// Verify a single-poly Hyrax opening of `com` at `point` to `value`.
+/// Caller MUST `sponge.absorb(&value)` before this call (mirrors
+/// [`open_at`]).
 pub fn verify_at(
     vk: &VerifierKey,
     com: &Commitment,
     point: &[Fr],
+    value: Fr,
     proof: &Proof,
     sponge: &mut impl CryptographicSponge,
 ) -> Result<bool, HyraxError> {
-    verify_inner(vk, com, point, proof, sponge)
+    verify_inner(vk, com, point, value, proof, sponge)
 }
 
 // ---------------------------------------------------------------------------
@@ -576,9 +613,10 @@ pub fn verify_batched_at(
         row_coms: row_coms_batch,
     };
 
-    // Mirror the single-poly verify: bind y_batch before delegating.
+    // Mirror the single-poly verify: absorb y_batch, then check the
+    // opening of C_batch against it.
     sponge.absorb(&value_batch);
-    verify_inner(vk, &com_batch, point, proof, sponge)
+    verify_inner(vk, &com_batch, point, value_batch, proof, sponge)
 }
 
 #[cfg(test)]
@@ -638,7 +676,7 @@ mod tests {
 
             let mut vsponge = fresh_sponge();
             vsponge.absorb(&val);
-            let ok = verify_at(&ck, &com, &point_le, &proof, &mut vsponge).unwrap();
+            let ok = verify_at(&ck, &com, &point_le, val, &proof, &mut vsponge).unwrap();
             assert!(ok, "honest open rejected");
         }
     }
@@ -660,10 +698,66 @@ mod tests {
         let (_, proof) =
             open_at(&ck, &evals, &state, &com, &point_le, &mut psponge, &mut rng).unwrap();
 
+        let lie = true_val + Fr::from(1u64);
         let mut vsponge = fresh_sponge();
-        vsponge.absorb(&(true_val + Fr::from(1u64))); // lie
-        let ok = verify_at(&ck, &com, &point_le, &proof, &mut vsponge).unwrap();
+        vsponge.absorb(&lie);
+        let ok = verify_at(&ck, &com, &point_le, lie, &proof, &mut vsponge).unwrap();
         assert!(!ok, "verifier accepted a lying claimed value");
+    }
+
+    #[test]
+    fn forged_value_rejected() {
+        // A dishonest prover absorbs its own false value, so prover and
+        // verifier derive the same challenge. Before `com_eval` was
+        // checked against the claimed value, all 12 forgeries verified.
+        let mut rng = test_rng();
+        let n_vars = 4;
+        let ck = setup_ck(n_vars, &mut rng);
+        let mut accepted = 0;
+        for _ in 0..12 {
+            let evals = rand_evals(n_vars, &mut rng);
+            let (com, state) = commit(&ck, &evals, &mut rng).unwrap();
+            let point_le: Vec<Fr> = (0..n_vars).map(|_| Fr::rand(&mut rng)).collect();
+            let true_val = DenseMultilinearExtension::from_evaluations_slice(n_vars, &evals)
+                .evaluate(&point_le.to_vec());
+            let fake = Fr::rand(&mut rng);
+            assert_ne!(fake, true_val);
+
+            let mut psponge = fresh_sponge();
+            psponge.absorb(&fake);
+            let (_, proof) =
+                open_at(&ck, &evals, &state, &com, &point_le, &mut psponge, &mut rng).unwrap();
+
+            let mut vsponge = fresh_sponge();
+            vsponge.absorb(&fake);
+            if verify_at(&ck, &com, &point_le, fake, &proof, &mut vsponge).unwrap() {
+                accepted += 1;
+            }
+        }
+        assert_eq!(accepted, 0, "forged openings accepted: {accepted}/12");
+    }
+
+    #[test]
+    fn tampered_r_eval_rejected() {
+        let mut rng = test_rng();
+        let n_vars = 4;
+        let ck = setup_ck(n_vars, &mut rng);
+        let evals = rand_evals(n_vars, &mut rng);
+        let (com, state) = commit(&ck, &evals, &mut rng).unwrap();
+        let point_le: Vec<Fr> = (0..n_vars).map(|_| Fr::rand(&mut rng)).collect();
+        let true_val = DenseMultilinearExtension::from_evaluations_slice(n_vars, &evals)
+            .evaluate(&point_le.to_vec());
+
+        let mut psponge = fresh_sponge();
+        psponge.absorb(&true_val);
+        let (_, mut proof) =
+            open_at(&ck, &evals, &state, &com, &point_le, &mut psponge, &mut rng).unwrap();
+        proof.r_eval += Fr::from(1u64);
+
+        let mut vsponge = fresh_sponge();
+        vsponge.absorb(&true_val);
+        let ok = verify_at(&ck, &com, &point_le, true_val, &proof, &mut vsponge).unwrap();
+        assert!(!ok, "verifier accepted a proof with a tampered r_eval");
     }
 
     #[test]
@@ -793,5 +887,77 @@ mod tests {
         let mut vsponge = fresh_sponge();
         let ok = verify_batched_at(&ck, &vitems, &point_le, &proof, &mut vsponge).unwrap();
         assert!(!ok, "verifier accepted swapped (com, value) pairing");
+    }
+
+    #[test]
+    fn batched_forged_value_rejected() {
+        // A dishonest prover mirrors `open_batched_at` but absorbs false
+        // values y_k (and their combination y_batch) for all three tensors.
+        let mut rng = test_rng();
+        let n_vars = 4;
+        let dim = 1usize << (n_vars / 2);
+        let ck = setup_ck(n_vars, &mut rng);
+        let polys: Vec<Vec<Fr>> = (0..3).map(|_| rand_evals(n_vars, &mut rng)).collect();
+        let mut coms = Vec::new();
+        let mut states = Vec::new();
+        for evals in &polys {
+            let (c, s) = commit(&ck, evals, &mut rng).unwrap();
+            coms.push(c);
+            states.push(s);
+        }
+        let point_le: Vec<Fr> = (0..n_vars).map(|_| Fr::rand(&mut rng)).collect();
+        let fakes: Vec<Fr> = (0..3).map(|_| Fr::rand(&mut rng)).collect();
+
+        let mut psponge = fresh_sponge();
+        psponge.absorb(&(polys.len() as u64));
+        for k in 0..polys.len() {
+            psponge.absorb(&serialize_compressed_vec(&coms[k].row_coms));
+            psponge.absorb(&fakes[k]);
+        }
+        let rho = psponge.squeeze_field_elements::<Fr>(1)[0];
+        let powers = powers_of(rho, polys.len());
+
+        let mut evals_batch = vec![Fr::from(0u64); 1 << n_vars];
+        let mut randomness_batch = vec![Fr::from(0u64); dim];
+        let mut row_coms_batch_proj: Vec<<G1Affine as AffineRepr>::Group> =
+            vec![<<G1Affine as AffineRepr>::Group as ark_std::Zero>::zero(); dim];
+        for k in 0..polys.len() {
+            for i in 0..evals_batch.len() {
+                evals_batch[i] += powers[k] * polys[k][i];
+            }
+            for j in 0..dim {
+                randomness_batch[j] += powers[k] * states[k].randomness[j];
+                row_coms_batch_proj[j] += coms[k].row_coms[j] * powers[k];
+            }
+        }
+        let com_batch = HyraxCommitment {
+            row_coms: <<G1Affine as AffineRepr>::Group as CurveGroup>::normalize_batch(
+                &row_coms_batch_proj,
+            ),
+        };
+        let fake_batch = fakes
+            .iter()
+            .zip(powers.iter())
+            .fold(Fr::from(0u64), |acc, (y, p)| acc + *y * *p);
+        psponge.absorb(&fake_batch);
+        let (_, proof) = open_inner(
+            &ck,
+            &evals_batch,
+            &randomness_batch,
+            &com_batch,
+            &point_le,
+            &mut psponge,
+            &mut rng,
+        )
+        .unwrap();
+
+        let vitems: Vec<BatchVerifyItem> = coms
+            .iter()
+            .zip(fakes.iter())
+            .map(|(com, &value)| BatchVerifyItem { com, value })
+            .collect();
+        let mut vsponge = fresh_sponge();
+        let ok = verify_batched_at(&ck, &vitems, &point_le, &proof, &mut vsponge).unwrap();
+        assert!(!ok, "verifier accepted a forged batched opening");
     }
 }
